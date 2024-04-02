@@ -3,19 +3,28 @@
 #define GET_BITS(start, len, input) ((uint32_t) (((input) >> (start)) & ((1 << (len)) - 1)))
 #define USIGN(in) (uint32_t) in
 #define SIGN(in) (int32_t) in
-#define GET_RS(in) GET_BITS(21, 5, in)
-#define GET_RT(in) GET_BITS(16, 5, in)
-#define GET_IM(in) GET_BITS(0, 16, in)
-#define REGS_C(in) CURRENT_STATE.REGS[in] //check if current or next
-#define REGS_N(in) NEXT_STATE.REGS[in]
-#define addi(in) NEXT_STATE.REGS[GET_RT(in)] = REGS_C(GET_RS(in)) + SIGN((GET_BITS(15, 1, in) ? 0xffff << 16 : 0) | GET_IM(in))
-#define addiu(in) NEXT_STATE.REGS[in] = REGS_C(GET_RT(in)) + USIGN(GET_IM(in))
+#define GET_RS(in) USIGN(GET_BITS(21, 5, in))
+#define GET_RT(in) USIGN(GET_BITS(16, 5, in))
+#define GET_IM(in) USIGN(GET_BITS(0, 16, in))
 #define PC_28to31 GET_BITS(28, 4, CURRENT_STATE.PC)
 
 typedef enum{
     Tr = 1,
     Fa = 0
 } bool;
+
+void addi(uint32_t in){
+    printf("rT: %d\n", in);
+    uint32_t rt = GET_RT(in);
+    printf("rT: %d\n", rt);
+    uint32_t rs = GET_RS(in);
+    printf("rT: %d\n", rt);
+    NEXT_STATE.REGS[rt] = CURRENT_STATE.REGS[rs] + SIGN((GET_IM(in) | (16 >> (GET_BITS(14,1,in) << 31))) | GET_IM(in));
+}
+
+void addiu(uint32_t in){
+    NEXT_STATE.REGS[GET_RT(in)] = CURRENT_STATE.REGS[GET_RS(in)] + USIGN((GET_IM(in) | (16 >> (GET_BITS(14,1,in) << 31))) | GET_IM(in));
+}
 
 
 void norm(){
@@ -31,10 +40,10 @@ void jumpi(int32_t target){
 }
 
 void stli(uint32_t in, bool s){
-    if((SIGN(REGS_C(GET_RS(in))) < SIGN(GET_BITS(15, 1, in)? 0xffff  << 16: 0x0 | GET_IM(in))) && s){
+    if((SIGN(CURRENT_STATE.REGS[GET_RS(in)]) < SIGN(GET_BITS(15, 1, in)? 0xffff  << 16: 0x0 | GET_IM(in))) && s){
         NEXT_STATE.REGS[GET_RT(in)] = USIGN(1);
     }
-    if((REGS_C(GET_RS(in)) < USIGN(GET_IM(in) | (16 >> (GET_BITS(15,1,in) << 31)))) && !s){
+    if((CURRENT_STATE.REGS[GET_RS(in)] < USIGN(GET_IM(in) | (16 >> (GET_BITS(15,1,in) << 31)))) && !s){
         NEXT_STATE.REGS[GET_RT(in)] = USIGN(1);
     }
     else{
@@ -43,7 +52,7 @@ void stli(uint32_t in, bool s){
 }
 
 void LB(uint32_t in){
-    uint32_t addr = REGS_C(GET_RS(in)) + (GET_IM(in) | (16 >> (GET_BITS(15,1,in) << 31)));
+    uint32_t addr = CURRENT_STATE.REGS[GET_RS(in)] + (GET_IM(in) | (16 >> (GET_BITS(15,1,in) << 31)));
     NEXT_STATE.REGS[GET_RT(in)] = (24 >> (GET_BITS(7, 1, mem_read_32(addr)) << 31)) | GET_BITS(0, 7, mem_read_32(addr));
     norm();
 }
@@ -64,7 +73,7 @@ void process_instruction()
         }
         case (uint32_t)0x3:{ //JAL
             uint32_t temp = USIGN(GET_BITS(0, 26, a) << 2 );
-            REGS_C(31) = CURRENT_STATE.PC + 4;
+            NEXT_STATE.REGS[31] = CURRENT_STATE.PC + 4;
             jumpu(temp);
             break;
         }
@@ -78,7 +87,7 @@ void process_instruction()
         }
         case (uint32_t)0x5:{ //BNE, sign extend this
             int32_t target = (GET_BITS(15, 1, a) ? 0x3fff << 14: 0x0) | (GET_IM(a) << 2);
-            if(REGS_C(GET_RS(a)) != REGS_C(GET_RT(a))){
+            if(CURRENT_STATE.REGS[GET_RS(a)] != CURRENT_STATE.REGS[GET_RT(a)]){
                 jumpi(target);
             }
             else norm();
@@ -86,7 +95,7 @@ void process_instruction()
         }
         case (uint32_t)0x6:{ //BLEZ
             int32_t target = (GET_BITS(15, 1, a) ? 0x3fff << 14: 0x0) | (GET_IM(a) << 2);
-            if( REGS_C(a) == 0 || 1 == GET_BITS(31, 1, REGS_C(GET_RS(a)))) {
+            if( CURRENT_STATE.REGS[GET_RS(a)] == 0 || 1 == GET_BITS(31, 1, CURRENT_STATE.REGS[GET_RS(a)])) {
                 jumpi(target);
             }
             else norm();
@@ -94,7 +103,7 @@ void process_instruction()
         }
         case (uint32_t)0x7:{ //BGTZ
             int32_t target = (GET_BITS(15, 1, GET_IM(a)) ? 0x3fff << 14: 0x0) | (GET_IM(a) << 2);
-            if(REGS_C(GET_RS(a)) != 0 && GET_BITS(31, 1, REGS_C(GET_RS(a))) == 0){
+            if(CURRENT_STATE.REGS[GET_RS(a)] != 0 && GET_BITS(31, 1, CURRENT_STATE.REGS[GET_RS(a)]) == 0){
                 jumpi(target);
             }
             else norm();
@@ -122,17 +131,17 @@ void process_instruction()
             break;
         }
         case (uint32_t)0xc:{ //andi
-            NEXT_STATE.REGS[GET_RT(a)] = REGS_C(GET_RS(a)) & USIGN(GET_IM(a));
+            NEXT_STATE.REGS[GET_RT(a)] = CURRENT_STATE.REGS[GET_RS(a)] & USIGN(GET_IM(a));
             norm();
             break;
         }
         case (uint32_t)0xd:{ //ori
-            NEXT_STATE.REGS[GET_RT(a)] = REGS_C(GET_RS(a)) | USIGN(GET_IM(a));
+            NEXT_STATE.REGS[GET_RT(a)] = CURRENT_STATE.REGS[GET_RS(a)] | USIGN(GET_IM(a));
             norm();
             break;
         }
         case (uint32_t)0xe:{ //xori
-            NEXT_STATE.REGS[GET_RT(a)] = REGS_C(GET_RS(a)) ^ USIGN(GET_IM(a));
+            NEXT_STATE.REGS[GET_RT(a)] = CURRENT_STATE.REGS[GET_RS(a)] ^ USIGN(GET_IM(a));
             norm();
             break;
         }
